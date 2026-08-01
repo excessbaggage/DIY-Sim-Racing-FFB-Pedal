@@ -57,6 +57,61 @@ bool assignmentUpdate_b = false;
 bool assignmentClear_b = false;
 bool deviceIdStructChecker = false;
 unsigned long Rudder_initialized_time=0;
+
+// =========================================================
+// FM5/FM6: Rudder transition state helpers
+// =========================================================
+// The enable/disable logic was duplicated in ESPNOW_lib.h (wireless path) and Main.cpp (serial
+// path), and neither cleared the opposite transition flag. Toggling off during initialization left
+// Rudder_initializing latched true forever, which silently gated off the rudder position broadcast
+// (see the !Rudder_initializing check in the ESPNOW TX path) - the pedals then never synced again
+// until a power cycle. These helpers make the transitions mutually exclusive in one place.
+//
+// Rudder_initializing_startTime backs a hard failure timeout: initialization requires the pedal to
+// settle near center, and if that never happens there was previously no way out.
+unsigned long Rudder_initializing_startTime = 0;
+
+#define RUDDER_INIT_FAILURE_TIMEOUT_MS 15000UL
+
+static inline void rudderSetEnabled(DapCalculationVariables_t* calcVars_st, bool enable_b)
+{
+  calcVars_st->rudderStatus_b = enable_b;
+  // Entering one transition always cancels the other.
+  Rudder_initializing   = enable_b;
+  Rudder_deinitializing = !enable_b;
+  Rudder_initialized_time = 0;
+  Rudder_initializing_startTime = enable_b ? millis() : 0;
+  moveSlowlyToPosition_b = true;
+  if (!enable_b)
+  {
+    calcVars_st->rudderBrakeStatus_b = false;
+  }
+}
+
+static inline void heliRudderSetEnabled(DapCalculationVariables_t* calcVars_st, bool enable_b)
+{
+  calcVars_st->helicopterRudderStatus_b = enable_b;
+  HeliRudder_initializing   = enable_b;
+  HeliRudder_deinitializing = !enable_b;
+  Rudder_initialized_time = 0;
+  Rudder_initializing_startTime = enable_b ? millis() : 0;
+  moveSlowlyToPosition_b = true;
+}
+
+static inline void rudderClearAll(DapCalculationVariables_t* calcVars_st)
+{
+  calcVars_st->rudderStatus_b = false;
+  calcVars_st->helicopterRudderStatus_b = false;
+  calcVars_st->rudderBrakeStatus_b = false;
+  Rudder_initializing = false;
+  HeliRudder_initializing = false;
+  Rudder_deinitializing = true;
+  HeliRudder_deinitializing = true;
+  Rudder_initialized_time = 0;
+  Rudder_initializing_startTime = 0;
+  moveSlowlyToPosition_b = true;
+}
+
 DapAssignmentReg_t dap_assignement_reg;
 DapRudder_t dap_rudder_receiving;
 DapRudder_t dap_rudder_sending;
@@ -458,24 +513,10 @@ void onRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *data, int da
                   // ESPNow.add_peer(Recv_mac);
                 }
               }
-              if (dap_calculationVariables_st.rudderStatus_b == false)
-              {
-                dap_calculationVariables_st.rudderStatus_b = true;
-                Rudder_initializing = true;
-                // ActiveSerial->println("Rudder on");
-                moveSlowlyToPosition_b = true;
-                // ActiveSerial->print("status:");
-                // ActiveSerial->println(dap_calculationVariables_st.rudderStatus_b);
-              }
-              else
-              {
-                dap_calculationVariables_st.rudderStatus_b = false;
-                // ActiveSerial->println("Rudder off");
-                Rudder_deinitializing = true;
-                moveSlowlyToPosition_b = true;
-                // ActiveSerial->print("status:");
-                // ActiveSerial->println(dap_calculationVariables_st.rudderStatus_b);
-              }
+              // FM4/FM5: still a toggle for wire compatibility with the current SimHub plugin, which
+              // has no separate disable opcode and re-sends the same enable value to turn rudder off.
+              // Routed through the helper so the opposite transition flag is always cleared.
+              rudderSetEnabled(&dap_calculationVariables_st, !dap_calculationVariables_st.rudderStatus_b);
             }
             if (dap_actions_st.payloadPedalAction_st.rudderAction_u8 == (uint8_t)RudderAction::HELIRUDDER_THROTTLE_AND_BRAKE || dap_actions_st.payloadPedalAction_st.rudderAction_u8 == (uint8_t)RudderAction::HELIRUDDER_THROTTLE_AND_CLUTCH)
             {
@@ -488,24 +529,8 @@ void onRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *data, int da
                   // ESPNow.add_peer(Recv_mac);
                 }
               }
-              if (dap_calculationVariables_st.helicopterRudderStatus_b == false)
-              {
-                dap_calculationVariables_st.helicopterRudderStatus_b = true;
-                HeliRudder_initializing = true;
-                // ActiveSerial->println("Rudder on");
-                moveSlowlyToPosition_b = true;
-                // ActiveSerial->print("status:");
-                // ActiveSerial->println(dap_calculationVariables_st.rudderStatus_b);
-              }
-              else
-              {
-                dap_calculationVariables_st.helicopterRudderStatus_b = false;
-                // ActiveSerial->println("Rudder off");
-                HeliRudder_deinitializing = true;
-                moveSlowlyToPosition_b = true;
-                // ActiveSerial->print("status:");
-                // ActiveSerial->println(dap_calculationVariables_st.rudderStatus_b);
-              }
+              // FM4/FM5: see rudderSetEnabled note above.
+              heliRudderSetEnabled(&dap_calculationVariables_st, !dap_calculationVariables_st.helicopterRudderStatus_b);
             }
             if (dap_actions_st.payloadPedalAction_st.rudderBrakeAction_u8 == 1)
             {
@@ -528,13 +553,9 @@ void onRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *data, int da
             // clear rudder status
             if (dap_actions_st.payloadPedalAction_st.rudderAction_u8 == (uint8_t)RudderAction::RUDDER_CLEAR_RUDDER_STATUS)
             {
-              dap_calculationVariables_st.rudderStatus_b = false;
-              dap_calculationVariables_st.helicopterRudderStatus_b = false;
-              dap_calculationVariables_st.rudderBrakeStatus_b = false;
-              // ActiveSerial->println("Rudder Status Clear");
-              Rudder_deinitializing = true;
-              HeliRudder_deinitializing = true;
-              moveSlowlyToPosition_b = true;
+              // FM5: this previously left Rudder_initializing / HeliRudder_initializing latched, so a
+              // clear issued mid-initialization permanently disabled the rudder position broadcast.
+              rudderClearAll(&dap_calculationVariables_st);
             }
           }
         }

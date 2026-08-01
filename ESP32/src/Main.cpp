@@ -2224,7 +2224,20 @@ void IRAM_ATTR_FLAG pedalUpdateTask( void * pvParameters )
       Rudder_real_poisiton= 100.0f*((float)(positionWithoutEffect-dap_calculationVariables_st.stepperPosMinDefault_i32) / dap_calculationVariables_st.stepperPosRangeDefault_fl32);
 
       dap_calculationVariables_st.currentPedalPosition_u32 = positionWithoutEffect;
-      dap_calculationVariables_st.currentPedalPositionRatio_fl32=((float)(dap_calculationVariables_st.currentPedalPosition_u32-dap_calculationVariables_st.stepperPosMinDefault_i32))/((float)dap_calculationVariables_st.stepperPosRangeDefault_fl32);
+
+      // FM1a: currentPedalPosition_u32 is unsigned, stepperPosMinDefault_i32 is signed. The usual
+      // arithmetic conversions promote the subtraction to uint32_t, so any position below the soft
+      // min wrapped to ~4.29e9 instead of going negative. The ratio then left [0,1] entirely and was
+      // broadcast to the partner pedal, where it overflowed an int32_t cast and poisoned the rudder
+      // Kalman filter. Cast to signed first, then clamp - the ratio is normalized by definition.
+      float pedalPositionRatio_fl32 = 0.0f;
+      if (dap_calculationVariables_st.stepperPosRangeDefault_fl32 > 0.0001f)
+      {
+        pedalPositionRatio_fl32 = ((float)((int32_t)dap_calculationVariables_st.currentPedalPosition_u32
+                                         - dap_calculationVariables_st.stepperPosMinDefault_i32))
+                                / dap_calculationVariables_st.stepperPosRangeDefault_fl32;
+      }
+      dap_calculationVariables_st.currentPedalPositionRatio_fl32 = constrain(pedalPositionRatio_fl32, 0.0f, 1.0f);
       //Rudder initialzing and de initializing
       #ifdef ESPNOW_Enable
         if(dap_calculationVariables_st.rudderStatus_b)
@@ -2245,30 +2258,49 @@ void IRAM_ATTR_FLAG pedalUpdateTask( void * pvParameters )
             //ActiveSerial->println("moving to center");
 
           }
-          if(Rudder_initializing && (Rudder_real_poisiton<52 && Rudder_real_poisiton>48))
+          if(Rudder_initializing)
           {
-            if(Rudder_initialized_time==0)
+            bool nearCenter_b = (Rudder_real_poisiton<52 && Rudder_real_poisiton>48);
+
+            if(nearCenter_b)
             {
-              Rudder_initialized_time=millis();
-            }
-            else
-            {
-              unsigned long Rudder_initialzing_time_Now = millis();
-              //wait 3s for the initializing
-              //ActiveSerial->print("Rudder initializing...");
-              //ActiveSerial->println(Rudder_initialzing_time_Now-Rudder_initialized_time);
-              if( (Rudder_initialzing_time_Now-Rudder_initialized_time)> Rudder_timeout )
+              if(Rudder_initialized_time==0)
+              {
+                Rudder_initialized_time=millis();
+              }
+              else if( (millis()-Rudder_initialized_time) > Rudder_timeout )
               {
                 Rudder_initializing=false;
                 moveSlowlyToPosition_b=false;
                 ActiveSerial->println("Rudder initialized");
                 dap_calculationVariables_st.isRudderInitialized_b=true;
                 Rudder_initialized_time=0;
+                Rudder_initializing_startTime=0;
                 Buzzer.play_melody_tone(melody_Airship_theme, sizeof(melody_Airship_theme)/sizeof(melody_Airship_theme[0]),melody_Airship_theme_duration);
               }
             }
-            
+            else
+            {
+              // FM6a: restart the dwell timer whenever the pedal leaves the center window. Without
+              // this the timer kept running from the first entry, so the check degenerated into
+              // "be near center once, then be near center again 3s later" rather than the
+              // "hold near center for 3s" the original comment described.
+              Rudder_initialized_time=0;
+            }
 
+            // FM6b: hard failure timeout. Initialization previously had no way to give up - if the
+            // pedal never settled near center (partner not transmitting, offset filter not
+            // converging) Rudder_initializing stayed latched forever, which also gated off the
+            // rudder position broadcast. Fail loudly and leave rudder mode disabled.
+            if( Rudder_initializing
+             && (Rudder_initializing_startTime != 0)
+             && ((millis()-Rudder_initializing_startTime) > RUDDER_INIT_FAILURE_TIMEOUT_MS) )
+            {
+              ActiveSerial->println("Rudder init FAILED: pedal never settled near center. Rudder disabled.");
+              rudderClearAll(&dap_calculationVariables_st);
+              dap_calculationVariables_st.isRudderInitialized_b=false;
+              Buzzer.single_beep_tone(440, 400);
+            }
           }
         }
         if(Rudder_deinitializing)
@@ -2291,27 +2323,42 @@ void IRAM_ATTR_FLAG pedalUpdateTask( void * pvParameters )
             moveSlowlyToPosition_b=true;
             //ActiveSerial->println("moving to center");
           }
-          if(HeliRudder_initializing && (Rudder_real_poisiton<52 && Rudder_real_poisiton>48))
+          if(HeliRudder_initializing)
           {
-            if(Rudder_initialized_time==0)
+            bool nearCenter_b = (Rudder_real_poisiton<52 && Rudder_real_poisiton>48);
+
+            if(nearCenter_b)
             {
-              Rudder_initialized_time=millis();
-            }
-            else
-            {
-              unsigned long Rudder_initialzing_time_Now = millis();
-              //wait 3s for the initializing
-              //ActiveSerial->print("Rudder initializing...");
-              //ActiveSerial->println(Rudder_initialzing_time_Now-Rudder_initialized_time);
-              if( (Rudder_initialzing_time_Now-Rudder_initialized_time)> Rudder_timeout )
+              if(Rudder_initialized_time==0)
+              {
+                Rudder_initialized_time=millis();
+              }
+              else if( (millis()-Rudder_initialized_time) > Rudder_timeout )
               {
                 HeliRudder_initializing=false;
                 moveSlowlyToPosition_b=false;
                 ActiveSerial->println("HeliRudder initialized");
                 dap_calculationVariables_st.isHelicopterRudderInitialized_b=true;
                 Rudder_initialized_time=0;
+                Rudder_initializing_startTime=0;
                 Buzzer.play_melody_tone(melodyAirwolfTheme, sizeof(melodyAirwolfTheme)/sizeof(melodyAirwolfTheme[0]),melodyAirwolfThemeDuration);
               }
+            }
+            else
+            {
+              // FM6a: restart the dwell timer on leaving the center window (see rudder path above).
+              Rudder_initialized_time=0;
+            }
+
+            // FM6b: hard failure timeout - see rudder path above.
+            if( HeliRudder_initializing
+             && (Rudder_initializing_startTime != 0)
+             && ((millis()-Rudder_initializing_startTime) > RUDDER_INIT_FAILURE_TIMEOUT_MS) )
+            {
+              ActiveSerial->println("HeliRudder init FAILED: pedal never settled near center. Rudder disabled.");
+              rudderClearAll(&dap_calculationVariables_st);
+              dap_calculationVariables_st.isHelicopterRudderInitialized_b=false;
+              Buzzer.single_beep_tone(440, 400);
             }
           }
         }
@@ -2362,14 +2409,18 @@ void IRAM_ATTR_FLAG pedalUpdateTask( void * pvParameters )
       #endif
 
       // Move to new position
+      // FM3: hoisted out of the fast-path branch so the slow-move branch can keep them in sync.
+      // Position_Last_fl32 is the feed-forward reference for the next cycle's speed calculation -
+      // leaving it stale across a slow move made the following cycle compute its delta against a
+      // position the pedal had already left.
+      static float Position_Last_fl32 = 0.0f;
+      static int32_t s_lastCommandedTarget_i32 = -1;
+      static uint32_t s_lastCommandedSpeed_u32 = 0;
+
       if (doMovement_b)
       {
         if (!moveSlowlyToPosition_b)
         {
-          static float Position_Last_fl32 = 0.0f;
-          static int32_t s_lastCommandedTarget_i32 = -1;
-          static uint32_t s_lastCommandedSpeed_u32 = 0;
-
           // compute required speed to reach the target position within the next control cycle, so that the movement appears smooth and without delay.
           // float distanceToMove = Position_Next_fl32 - (float)stepperPosCurrent_i32;
           float distanceToMove = Position_Next_fl32 - Position_Last_fl32;
@@ -2419,8 +2470,17 @@ void IRAM_ATTR_FLAG pedalUpdateTask( void * pvParameters )
         }
         else
         {
+          // FM3: this used to call stepper->moveSlowlyToPos(), which issues a BLOCKING moveTo().
+          // Rudder init/deinit re-arms moveSlowlyToPosition_b every cycle, so the highest-priority
+          // task in the system blocked on a slow move at a nominal 4 kHz for the entire ~3 s
+          // transition - stalling the control loop, starving the loadcell queue, and making
+          // engage/disengage feel rough. Issue a non-blocking rate-limited command instead and let
+          // the normal loop converge; the transition still moves slowly, but nothing blocks.
           moveSlowlyToPosition_b = false;
-          stepper->moveSlowlyToPos(Position_Next);
+          stepper->moveToWithSpeed(Position_Next, (uint32_t)(MAXIMUM_STEPPER_SPEED_U32 / 8));
+          Position_Last_fl32 = Position_Next_fl32;
+          s_lastCommandedTarget_i32 = Position_Next;
+          s_lastCommandedSpeed_u32 = (uint32_t)(MAXIMUM_STEPPER_SPEED_U32 / 8);
         }
       }
     
@@ -3018,27 +3078,15 @@ void IRAM_ATTR_FLAG serialCommunicationTaskRx(void *pvParameters) {
                         }
 
                         #ifdef ESPNOW_Enable
-                          if(received_action.payloadPedalAction_st.rudderAction_u8==1)//Enable Rudder
+                          if(received_action.payloadPedalAction_st.rudderAction_u8==1)//Toggle Rudder
                           {
-                            if(dap_calculationVariables_st.rudderStatus_b==false)
-                            {
-                              dap_calculationVariables_st.rudderStatus_b=true;
-                              ActiveSerial->println("Rudder on");
-                              Rudder_initializing=true;
-                              moveSlowlyToPosition_b=true;
-                              //ActiveSerial->print("status:");
-                              //ActiveSerial->println(dap_calculationVariables_st.rudderStatus_b);
-                            }
-                            else
-                            {
-                              dap_calculationVariables_st.rudderStatus_b=false;
-                              ActiveSerial->println("Rudder off");
-                              Rudder_deinitializing=true;
-                              moveSlowlyToPosition_b=true; 
-
-                              //ActiveSerial->print("status:");
-                              //ActiveSerial->println(dap_calculationVariables_st.rudderStatus_b);
-                            }
+                            // FM5: routed through the shared helper so enabling always cancels a
+                            // pending deinit and vice versa. Previously a toggle-off during init left
+                            // Rudder_initializing latched true, which silently killed the rudder
+                            // position broadcast until the next power cycle.
+                            bool enableRudder_b = !dap_calculationVariables_st.rudderStatus_b;
+                            rudderSetEnabled(&dap_calculationVariables_st, enableRudder_b);
+                            ActiveSerial->println(enableRudder_b ? "Rudder on" : "Rudder off");
                           }
                           if(received_action.payloadPedalAction_st.rudderBrakeAction_u8==1)
                           {
@@ -3060,12 +3108,9 @@ void IRAM_ATTR_FLAG serialCommunicationTaskRx(void *pvParameters) {
                           //clear rudder status
                           if(received_action.payloadPedalAction_st.rudderAction_u8==2)
                           {
-                            dap_calculationVariables_st.rudderStatus_b=false;
-                            dap_calculationVariables_st.rudderBrakeStatus_b=false;
+                            // FM5: clears both initializing flags, which the old code did not.
+                            rudderClearAll(&dap_calculationVariables_st);
                             ActiveSerial->println("Rudder Status Clear");
-                            Rudder_deinitializing=true;
-                            moveSlowlyToPosition_b=true;
-
                           }
                         #endif
                       }
@@ -3862,7 +3907,14 @@ void IRAM_ATTR_FLAG espNowCommunicationTaskTx( void * pvParameters )
             if((dap_calculationVariables_st.rudderStatus_b || dap_calculationVariables_st.helicopterRudderStatus_b) && (!Rudder_initializing && !HeliRudder_initializing))
             {              
                dap_rudder_sending.payloadRudderState_st.pedalPositionRatio_fl32=dap_calculationVariables_st.currentPedalPositionRatio_fl32;
-               dap_rudder_sending.payloadRudderState_st.pedalPosition_u16=dap_calculationVariables_st.currentPedalPosition_u32;
+               // FM2: pedalPosition_u16 is 16-bit but holds an absolute stepper position, which at
+               // 3750+ microsteps/rev exceeds 65535 partway down the stroke and wraps to 0. Widening
+               // the field would change sizeof(DapRudder_t) and break ESP-NOW interop with stock and
+               // V3-tree pedals (both check data_len == sizeof(DapRudder_t)), so the wire format is
+               // left alone. Saturate instead of wrapping: consumers currently only use the float
+               // ratio above, but a saturated value is at least monotonic if this is ever re-enabled.
+               dap_rudder_sending.payloadRudderState_st.pedalPosition_u16 =
+                   (uint16_t)constrain((int32_t)dap_calculationVariables_st.currentPedalPosition_u32, 0, 65535);
               dap_rudder_sending.payloadHeader_st.payloadType_u8=DAP_PAYLOAD_TYPE_ESPNOW_RUDDER_U8;
               dap_rudder_sending.payloadHeader_st.pedalTag_u8 = espnow_dap_config_st.payloadPedalConfig_st.pedalType_u8;
               dap_rudder_sending.payloadHeader_st.version_u8=DAP_VERSION_CONFIG_U8;
@@ -3878,11 +3930,20 @@ void IRAM_ATTR_FLAG espNowCommunicationTaskTx( void * pvParameters )
               //}
               if (g_ESPNow_Rudder_Update && !noAssignmentStatus)
               {
-                //dap_calculationVariables_st.syncPedalPosition_u32=ESPNow_recieve;
-                dap_calculationVariables_st.syncPedalPosition_u32=dap_rudder_receiving.payloadRudderState_st.pedalPosition_u16;
-                dap_calculationVariables_st.syncPedalPositionRatio_fl32=dap_rudder_receiving.payloadRudderState_st.pedalPositionRatio_fl32;
+                // FM1c: never let unvalidated network data reach the rudder Kalman filter. A single
+                // out-of-range ratio overflows the int32_t cast in Rudder::offsetCalculate (UB) and
+                // poisons the filter's internal state - constrain() there only clamps the output, so
+                // the corruption bleeds back out over subsequent samples. Reject rather than clamp:
+                // a bad frame means the partner is misbehaving, so holding the last good value is
+                // safer than acting on a saturated one.
+                float receivedRatio_fl32 = dap_rudder_receiving.payloadRudderState_st.pedalPositionRatio_fl32;
+                if (isfinite(receivedRatio_fl32) && (receivedRatio_fl32 >= 0.0f) && (receivedRatio_fl32 <= 1.0f))
+                {
+                  dap_calculationVariables_st.syncPedalPosition_u32=dap_rudder_receiving.payloadRudderState_st.pedalPosition_u16;
+                  dap_calculationVariables_st.syncPedalPositionRatio_fl32=receivedRatio_fl32;
+                }
                 g_ESPNow_Rudder_Update=false;
-              }                
+              }
             }
             rudderPacketsUpdateLast=millis();
           }    

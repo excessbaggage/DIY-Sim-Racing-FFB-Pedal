@@ -57,6 +57,26 @@ doesn't appear, hold **BOOT**, tap **RESET**, release BOOT — then it enumerate
 firmware version string). If you ever want to go back, the stock flasher at the project's
 web-flash tool restores upstream `main` in one click.
 
+### Flashing with a four-file flasher (web flasher / esptool GUI)
+
+If your flasher asks for four separate files, they're all in
+`ESP32\.pio\build\ControlBoard_PCBA_V1X\` after a build, at these offsets (ESP32-S3 layout —
+note the bootloader goes to **0x0**, not 0x1000 like classic ESP32):
+
+| Offset | File |
+|---|---|
+| `0x0000` | `bootloader.bin` |
+| `0x8000` | `partitions.bin` |
+| `0xE000` | `boot_app0.bin` |
+| `0x10000` | `firmware.bin` |
+
+Only `firmware.bin` changes when you rebuild after a code edit — the other three are boilerplate
+(bootloader, partition table, OTA boot selector) and only change if the partition layout or
+platform version changes. For repeat flashing you can write just `firmware.bin` at `0x10000`.
+
+Alternative: `firmware.factory.bin` in the same folder is all four merged into one image —
+flash it alone at offset `0x0` if your tool supports a single combined file.
+
 ### Verify after flashing
 
 Open a serial monitor at **3,000,000 baud**:

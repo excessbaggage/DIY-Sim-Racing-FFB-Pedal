@@ -2424,48 +2424,70 @@ void IRAM_ATTR_FLAG pedalUpdateTask( void * pvParameters )
           // compute required speed to reach the target position within the next control cycle, so that the movement appears smooth and without delay.
           // float distanceToMove = Position_Next_fl32 - (float)stepperPosCurrent_i32;
           float distanceToMove = Position_Next_fl32 - Position_Last_fl32;
-          Position_Last_fl32 = Position_Next_fl32;
 
-          // prevent very small movements, since it will induce pulse frequency 
+          // prevent very small movements, since it will induce pulse frequency
           // of 1 / (REPETITION_INTERVAL_PEDAL_UPDATE_TASK_IN_US_I64 * 1e-6) Hz = 4000Hz with sign flips
           float distanceToMoveAbs_fl32 = fabsf(distanceToMove);
-          
-          if (distanceToMoveAbs_fl32 != 0) 
+
+          // A3: the comment above described a deadband that was never implemented - the old
+          // "!= 0" gate passed arbitrarily small float deltas, so sub-step model dither reached
+          // the driver as +/-1 step target flips at the loop rate. Require at least half a step
+          // before commanding, and (crucially) only advance Position_Last_fl32 when a command is
+          // actually issued so sub-threshold deltas ACCUMULATE instead of being silently dropped -
+          // otherwise slow ramps below 0.5 step/cycle would never move at all.
+          const float COMMAND_DEADBAND_STEPS_FL32 = 0.5f;
+
+          // Catch-up proportional speed gain: recovers hardware step loss near the min endstop
+          // while the model is near standstill. Computed OUTSIDE the deadband gate on purpose -
+          // "model near standstill" is exactly when the deadband suppresses commands, so gating
+          // this behind it would make step-loss recovery unreachable. (The upstream gate keyed on
+          // requiredSpeed < 10 Hz, i.e. a per-cycle delta below 0.0025 steps - the deadband's
+          // "no command issued" condition is the same regime.)
+          int32_t hardwareDistance_i32 = (int32_t)Position_Last_fl32 - stepper->getCurrentPosition();
+          float catchUpSpeedHz = 0.0f;
+          bool modelNearStandstill_b = (distanceToMoveAbs_fl32 < COMMAND_DEADBAND_STEPS_FL32);
+
+          float targetPosFraction_fl32 = stepper->getCurrentPositionFractionFromExternalPos(Position_Next_fl32 - stepper->getMinPosition() );
+          if ( modelNearStandstill_b && (targetPosFraction_fl32 <= 0.05f) )
           {
+            if (abs(hardwareDistance_i32) > 1)
+            {
+                float catchUpKp = 400.0f;
+                catchUpSpeedHz = (float)(abs(hardwareDistance_i32) - 1) * catchUpKp;
+            }
+          }
+
+          if ( (distanceToMoveAbs_fl32 >= COMMAND_DEADBAND_STEPS_FL32) || (catchUpSpeedHz > 0.0f) )
+          {
+            Position_Last_fl32 = Position_Next_fl32;
+
             float deltaTime_s_fl32 = ((float)REPETITION_INTERVAL_PEDAL_UPDATE_TASK_IN_US_I64) * 1e-6f;
             float requiredSpeed = distanceToMoveAbs_fl32 / deltaTime_s_fl32;
 
             // slightly overspeed to make sure pulses reach in time
             // requiredSpeed *= 1.1f;
 
-            // Catch-up propotional speed gain
-            // Hardware distance (integer steps) for fallback and step-loss checks
-            int32_t hardwareDistance_i32 = (int32_t)Position_Last_fl32 - stepper->getCurrentPosition();
-
-            float catchUpSpeedHz = 0.0f;
-
-            // add catchup speed only near standstill & near min endstop
-            float targetPosFraction_fl32 = stepper->getCurrentPositionFractionFromExternalPos(Position_Next_fl32 - stepper->getMinPosition() );
-            if ( (fabsf(requiredSpeed) < 10) && (targetPosFraction_fl32 <= 0.05f) )
-            {
-              if (abs(hardwareDistance_i32) > 1) 
-              {
-                  float catchUpKp = 400.0f; 
-                  catchUpSpeedHz = (float)(abs(hardwareDistance_i32) - 1) * catchUpKp; 
-              }
-            }
-
             // total speed
             requiredSpeed = requiredSpeed + catchUpSpeedHz;
-            
+
             if (requiredSpeed > (float)MAXIMUM_STEPPER_SPEED_U32) {
                 requiredSpeed = (float)MAXIMUM_STEPPER_SPEED_U32;
             }
 
-            stepper->moveToWithSpeed((int32_t)Position_Next_fl32, requiredSpeed);
-            s_lastCommandedTarget_i32 = (int32_t)Position_Next_fl32;
-            s_lastCommandedSpeed_u32 = requiredSpeed;
-  
+            // A3: moveToWithSpeed takes an UNSIGNED speed - any float below 1.0 truncated to a
+            // commanded speed of ZERO, which the driver cannot execute. With the deadband above,
+            // feed-forward speeds are >= deadband/dt (2000 Hz at 4 kHz), so the floor guards the
+            // catch-up-only case and rounding edges. Round the target instead of truncating toward
+            // zero - truncation gave a half-step bias whose sign flipped across the origin.
+            if (requiredSpeed < 1.0f) {
+                requiredSpeed = 1.0f;
+            }
+
+            int32_t commandedTarget_i32 = (int32_t)lroundf(Position_Next_fl32);
+            stepper->moveToWithSpeed(commandedTarget_i32, (uint32_t)requiredSpeed);
+            s_lastCommandedTarget_i32 = commandedTarget_i32;
+            s_lastCommandedSpeed_u32 = (uint32_t)requiredSpeed;
+
           }
         }
         else

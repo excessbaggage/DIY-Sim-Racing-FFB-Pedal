@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="14.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
@@ -15,12 +15,17 @@
     <ProjectGuid>{833040C9-FE5E-4CCF-B21D-71979E049B6B}</ProjectGuid>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <TransformOnBuild>true</TransformOnBuild>
+    <!-- Build fix: the upstream project hardcodes SimHub DLL paths at five different relative
+         depths (..\..\ through ..\..\..\..\..\..\..\..\..\), so it only builds if the repo sits at
+         one exact place on disk. Point every SimHub reference at one overridable property:
+           msbuild /p:SimHubDir="D:\Games\SimHub\"  -->
+    <SimHubDir Condition=" '$(SimHubDir)' == '' ">C:\Program Files (x86)\SimHub\</SimHubDir>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
-    <OutputPath>..\..\..\..\..\..\..\Program Files %28x86%29\SimHub\</OutputPath>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
@@ -34,7 +39,7 @@
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
-    <OutputPath>..\..\..\..\..\..\..\Program Files %28x86%29\SimHub\</OutputPath>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
@@ -55,28 +60,28 @@
     </Reference>
     <Reference Include="AvalonDock.Themes.VS2013, Version=4.72.1.0, Culture=neutral, PublicKeyToken=3e4669d2f30244f4, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>C:\Program Files (x86)\SimHub\AvalonDock.Themes.VS2013.dll</HintPath>
+      <HintPath>$(SimHubDir)AvalonDock.Themes.VS2013.dll</HintPath>
     </Reference>
     <Reference Include="GameReaderCommon">
-      <HintPath>..\..\..\SimHub\GameReaderCommon.dll</HintPath>
+      <HintPath>$(SimHubDir)GameReaderCommon.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="HidSharp, Version=2.1.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>C:\Program Files (x86)\SimHub\HidSharp.dll</HintPath>
+      <HintPath>$(SimHubDir)HidSharp.dll</HintPath>
     </Reference>
     <Reference Include="InputManagerCS, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\InputManagerCS.dll</HintPath>
+      <HintPath>$(SimHubDir)InputManagerCS.dll</HintPath>
     </Reference>
     <Reference Include="log4net, Version=2.0.8.0, Culture=neutral, PublicKeyToken=669e0ddf0bb1aa2a, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\log4net.dll</HintPath>
+      <HintPath>$(SimHubDir)log4net.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="MahApps.Metro, Version=1.5.0.23, Culture=neutral, PublicKeyToken=f4fb5a3c4d1e5b4f, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\..\..\..\..\..\..\..\Program Files (x86)\SimHub\MahApps.Metro.dll</HintPath>
+      <HintPath>$(SimHubDir)MahApps.Metro.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="Microsoft.Bcl.AsyncInterfaces, Version=8.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
@@ -84,7 +89,7 @@
     </Reference>
     <Reference Include="NCalc, Version=3.1.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>C:\Program Files (x86)\SimHub\NCalc.dll</HintPath>
+      <HintPath>$(SimHubDir)NCalc.dll</HintPath>
     </Reference>
     <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <HintPath>packages\Newtonsoft.Json.13.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
@@ -94,11 +99,11 @@
     <Reference Include="PresentationFramework" />
     <Reference Include="SimHub.Logging, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\SimHub.Logging.dll</HintPath>
+      <HintPath>$(SimHubDir)SimHub.Logging.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="SimHub.Plugins">
-      <HintPath>..\..\..\SimHub\SimHub.Plugins.dll</HintPath>
+      <HintPath>$(SimHubDir)SimHub.Plugins.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="System" />
@@ -145,19 +150,19 @@
     <Reference Include="System.Xml" />
     <Reference Include="vJoyInterfaceWrap, Version=2.2.2.0, Culture=neutral, processorArchitecture=x86">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\SimHub\vJoyInterfaceWrap.dll</HintPath>
+      <HintPath>$(SimHubDir)vJoyInterfaceWrap.dll</HintPath>
     </Reference>
     <Reference Include="Windows.Data" />
     <Reference Include="Windows.UI" />
     <Reference Include="WindowsBase" />
     <Reference Include="WoteverCommon, Version=1.1.0.0, Culture=neutral, PublicKeyToken=35893a067a282a97, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>C:\Program Files (x86)\SimHub\WoteverCommon.dll</HintPath>
+      <HintPath>$(SimHubDir)WoteverCommon.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="WoteverLocalization, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>C:\Program Files (x86)\SimHub\WoteverLocalization.dll</HintPath>
+      <HintPath>$(SimHubDir)WoteverLocalization.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup>

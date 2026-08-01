@@ -93,6 +93,39 @@ You should see the normal boot chatter. The fork adds two new messages worth kno
 
 ---
 
+## 1b. Wireless Bridge firmware (`ESP32_master/` tree)
+
+If you use the wireless setup, there is a **third device**: the Bridge dongle plugged into the
+PC. It has its own firmware and participates in the DAP protocol version handshake — the plugin
+refuses a version-mismatched bridge ("Bridge Dap version: X, Plugin DAP version: Y"), and the
+pedals **silently drop** ESP-NOW packets whose version byte doesn't match theirs. All three
+(pedal firmware, bridge firmware, plugin DLL) must be built from the same tree.
+
+Pick the env for your hardware:
+
+| Bridge hardware | Env |
+|---|---|
+| ESP32-S3 dev kit / WaveShare ESP32-S3 N8R8 | `Bridge_esp32s3usbotg` |
+| Custom USB dongle (Gilphilbert Dongle V1, Lolin S3 Mini) | `Bridge_Dongle_V1` |
+
+Build (PowerShell, same MSYS caveat as the pedal):
+
+```bash
+python -m platformio run -e Bridge_esp32s3usbotg
+```
+
+from `ffb-pedal-fork\ESP32_master`. Flash over the bridge's own COM port (close SimHub first —
+it holds the port):
+
+```bash
+python -m platformio run -e Bridge_esp32s3usbotg -t upload --upload-port COM<N>
+```
+
+Same four-file layout as the pedal (S3: bootloader @ 0x0, partitions @ 0x8000, boot_app0 @
+0xE000, firmware @ 0x10000) if you prefer the manual flasher; output lands in
+`ESP32_master\.pio\build\<env>\`. An app-only flash preserves the stored pedal pairing; if the
+pedals don't reconnect afterwards, re-run pairing from the SimHub plugin.
+
 ## 2. SimHub plugin (`SimHubPlugin/` tree)
 
 ### One-time setup (already done on this machine)
